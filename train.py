@@ -39,9 +39,9 @@ if __name__ == "__main__":
     # Arguments
     parser = argparse.ArgumentParser(description='Train a SegNet model')
 
-    parser.add_argument('--epochs', type =int, default=100)
+    parser.add_argument('--epochs', type=int, default=1000)
     parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--eval_interval', type=int, default=1)
+    parser.add_argument('--eval_interval', type=int, default=10)
     parser.add_argument('--data_root', type=str, default='data/pascal/VOCdevkit/VOC2012')
     parser.add_argument('--train_path', type=str, default='ImageSets/Segmentation/train.txt')
     parser.add_argument('--val_path', type=str, default='ImageSets/Segmentation/val.txt')
