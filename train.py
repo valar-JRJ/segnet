@@ -119,6 +119,7 @@ if __name__ == "__main__":
                   .format(epoch, batches_done, loss, time_left))
 
         writer.scalar_summary('train_loss_epoch', epoch_loss.avg, epoch+1)
+        logger.info('{} epoch loss: {}'.format(epoch+1, epoch_loss.avg))
         is_better = epoch_loss.avg < prev_loss
         if is_better:
             prev_loss = epoch_loss.avg
