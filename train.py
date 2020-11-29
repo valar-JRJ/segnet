@@ -77,10 +77,10 @@ if __name__ == "__main__":
                                   shuffle=True,
                                   num_workers=4)
 
-    model = SegNet(n_classes=NUM_OUTPUT_CHANNELS, in_channels=NUM_INPUT_CHANNELS).to(device)
+    model = SegNet().to(device)
     class_weights = 1.0/train_dataset.get_class_probability().to(device)
     print(class_weights)
-    criterion = torch.nn.CrossEntropyLoss(weight=class_weights).to(device)
+    criterion = torch.nn.CrossEntropyLoss().to(device)
 
     # start from checkpoint
     if args.checkpoint:
