@@ -91,6 +91,7 @@ if __name__ == "__main__":
     is_better = True
     prev_loss = float('inf')
     epoch_loss = AverageMeter()
+    logger.info(args)
 
     model.train()
 
