@@ -1,393 +1,169 @@
-"""
-Pytorch implementation of SegNet (https://arxiv.org/pdf/1511.00561.pdf)
-"""
-
-from __future__ import division
-
 import torch.nn as nn
-import torchvision.models as models
-import torch.nn.functional as F
-import numpy
-
-DEBUG = False
 
 
-vgg16_dims = [
-                    (64, 64, 'M'),                                # Stage - 1
-                    (128, 128, 'M'),                              # Stage - 2
-                    (256, 256, 256,'M'),                          # Stage - 3
-                    (512, 512, 512, 'M'),                         # Stage - 4
-                    (512, 512, 512, 'M')                          # Stage - 5
-            ]
+class Conv2DBatchNormRelu(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        n_filters,
+        k_size,
+        stride,
+        padding,
+        bias=True,
+        dilation=1,
+        is_batchnorm=True,
+    ):
+        super(Conv2DBatchNormRelu, self).__init__()
 
-decoder_dims = [
-                    ('U', 512, 512, 512),                         # Stage - 5
-                    ('U', 512, 512, 512),                         # Stage - 4
-                    ('U', 256, 256, 256),                         # Stage - 3
-                    ('U', 128, 128),                              # Stage - 2
-                    ('U', 64, 64)                                 # Stage - 1
-                ]
+        conv_mod = nn.Conv2d(
+            int(in_channels),
+            int(n_filters),
+            kernel_size=k_size,
+            padding=padding,
+            stride=stride,
+            bias=bias,
+            dilation=dilation,
+        )
+
+        if is_batchnorm:
+            self.cbr_unit = nn.Sequential(
+                conv_mod, nn.BatchNorm2d(int(n_filters)), nn.ReLU(inplace=True)
+            )
+        else:
+            self.cbr_unit = nn.Sequential(conv_mod, nn.ReLU(inplace=True))
+
+    def forward(self, inputs):
+        outputs = self.cbr_unit(inputs)
+        return outputs
+
+
+class SegnetDown2(nn.Module):
+    def __init__(self, in_size, out_size):
+        super(SegnetDown2, self).__init__()
+        self.conv1 = Conv2DBatchNormRelu(in_size, out_size, 3, 1, 1)
+        self.conv2 = Conv2DBatchNormRelu(out_size, out_size, 3, 1, 1)
+        self.maxpool_with_argmax = nn.MaxPool2d(2, 2, return_indices=True)
+
+    def forward(self, inputs):
+        outputs = self.conv1(inputs)
+        outputs = self.conv2(outputs)
+        unpooled_shape = outputs.size()
+        outputs, indices = self.maxpool_with_argmax(outputs)
+        return outputs, indices, unpooled_shape
+
+
+class SegnetDown3(nn.Module):
+    def __init__(self, in_size, out_size):
+        super(SegnetDown3, self).__init__()
+        self.conv1 = Conv2DBatchNormRelu(in_size, out_size, 3, 1, 1)
+        self.conv2 = Conv2DBatchNormRelu(out_size, out_size, 3, 1, 1)
+        self.conv3 = Conv2DBatchNormRelu(out_size, out_size, 3, 1, 1)
+        self.maxpool_with_argmax = nn.MaxPool2d(2, 2, return_indices=True)
+
+    def forward(self, inputs):
+        outputs = self.conv1(inputs)
+        outputs = self.conv2(outputs)
+        outputs = self.conv3(outputs)
+        unpooled_shape = outputs.size()
+        outputs, indices = self.maxpool_with_argmax(outputs)
+        return outputs, indices, unpooled_shape
+
+
+class SegnetUp2(nn.Module):
+    def __init__(self, in_size, out_size):
+        super(SegnetUp2, self).__init__()
+        self.unpool = nn.MaxUnpool2d(2, 2)
+        self.conv1 = Conv2DBatchNormRelu(in_size, in_size, 3, 1, 1)
+        self.conv2 = Conv2DBatchNormRelu(in_size, out_size, 3, 1, 1)
+
+    def forward(self, inputs, indices, output_shape):
+        outputs = self.unpool(input=inputs, indices=indices, output_size=output_shape)
+        outputs = self.conv1(outputs)
+        outputs = self.conv2(outputs)
+        return outputs
+
+
+class SegnetUp3(nn.Module):
+    def __init__(self, in_size, out_size):
+        super(SegnetUp3, self).__init__()
+        self.unpool = nn.MaxUnpool2d(2, 2)
+        self.conv1 = Conv2DBatchNormRelu(in_size, in_size, 3, 1, 1)
+        self.conv2 = Conv2DBatchNormRelu(in_size, in_size, 3, 1, 1)
+        self.conv3 = Conv2DBatchNormRelu(in_size, out_size, 3, 1, 1)
+
+    def forward(self, inputs, indices, output_shape):
+        outputs = self.unpool(input=inputs, indices=indices, output_size=output_shape)
+        outputs = self.conv1(outputs)
+        outputs = self.conv2(outputs)
+        outputs = self.conv3(outputs)
+        return outputs
 
 
 class SegNet(nn.Module):
-    def __init__(self, input_channels, output_channels):
+    def __init__(self, n_classes=21, in_channels=3, is_unpooling=True):
         super(SegNet, self).__init__()
 
-        self.input_channels = input_channels
-        self.output_channels = output_channels
+        self.in_channels = in_channels
+        self.is_unpooling = is_unpooling
 
-        self.num_channels = input_channels
+        self.down1 = SegnetDown2(self.in_channels, 64)
+        self.down2 = SegnetDown2(64, 128)
+        self.down3 = SegnetDown3(128, 256)
+        self.down4 = SegnetDown3(256, 512)
+        self.down5 = SegnetDown3(512, 512)
 
-        self.vgg16 = models.vgg16(pretrained=True)
+        self.up5 = SegnetUp3(512, 512)
+        self.up4 = SegnetUp3(512, 256)
+        self.up3 = SegnetUp3(256, 128)
+        self.up2 = SegnetUp2(128, 64)
+        self.up1 = SegnetUp2(64, n_classes)
 
+    def forward(self, inputs):
 
-        # Encoder layers
+        down1, indices_1, unpool_shape1 = self.down1(inputs)
+        down2, indices_2, unpool_shape2 = self.down2(down1)
+        down3, indices_3, unpool_shape3 = self.down3(down2)
+        down4, indices_4, unpool_shape4 = self.down4(down3)
+        down5, indices_5, unpool_shape5 = self.down5(down4)
 
-        self.encoder_conv_00 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=self.input_channels,
-                                                          out_channels=64,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(64)
-                                                ])
-        self.encoder_conv_01 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=64,
-                                                          out_channels=64,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(64)
-                                                ])
-        self.encoder_conv_10 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=64,
-                                                          out_channels=128,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(128)
-                                                ])
-        self.encoder_conv_11 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=128,
-                                                          out_channels=128,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(128)
-                                                ])
-        self.encoder_conv_20 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=128,
-                                                          out_channels=256,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(256)
-                                                ])
-        self.encoder_conv_21 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=256,
-                                                          out_channels=256,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(256)
-                                                ])
-        self.encoder_conv_22 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=256,
-                                                          out_channels=256,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(256)
-                                                ])
-        self.encoder_conv_30 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=256,
-                                                          out_channels=512,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(512)
-                                                ])
-        self.encoder_conv_31 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=512,
-                                                          out_channels=512,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(512)
-                                                ])
-        self.encoder_conv_32 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=512,
-                                                          out_channels=512,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(512)
-                                                ])
-        self.encoder_conv_40 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=512,
-                                                          out_channels=512,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(512)
-                                                ])
-        self.encoder_conv_41 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=512,
-                                                          out_channels=512,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(512)
-                                                ])
-        self.encoder_conv_42 = nn.Sequential(*[
-                                                nn.Conv2d(in_channels=512,
-                                                          out_channels=512,
-                                                          kernel_size=3,
-                                                          padding=1),
-                                                nn.BatchNorm2d(512)
-                                                ])
+        up5 = self.up5(down5, indices_5, unpool_shape5)
+        up4 = self.up4(up5, indices_4, unpool_shape4)
+        up3 = self.up3(up4, indices_3, unpool_shape3)
+        up2 = self.up2(up3, indices_2, unpool_shape2)
+        up1 = self.up1(up2, indices_1, unpool_shape1)
 
-        self.init_vgg_weights()
+        return up1
 
-        # Decoder layers
+    def init_vgg16_params(self, vgg16):
+        blocks = [self.down1, self.down2, self.down3, self.down4, self.down5]
 
-        self.decoder_convtr_42 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=512,
-                                                                   out_channels=512,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(512)
-                                               ])
-        self.decoder_convtr_41 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=512,
-                                                                   out_channels=512,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(512)
-                                               ])
-        self.decoder_convtr_40 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=512,
-                                                                   out_channels=512,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(512)
-                                               ])
-        self.decoder_convtr_32 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=512,
-                                                                   out_channels=512,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(512)
-                                               ])
-        self.decoder_convtr_31 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=512,
-                                                                   out_channels=512,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(512)
-                                               ])
-        self.decoder_convtr_30 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=512,
-                                                                   out_channels=256,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(256)
-                                               ])
-        self.decoder_convtr_22 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=256,
-                                                                   out_channels=256,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(256)
-                                               ])
-        self.decoder_convtr_21 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=256,
-                                                                   out_channels=256,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(256)
-                                               ])
-        self.decoder_convtr_20 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=256,
-                                                                   out_channels=128,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(128)
-                                               ])
-        self.decoder_convtr_11 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=128,
-                                                                   out_channels=128,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(128)
-                                               ])
-        self.decoder_convtr_10 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=128,
-                                                                   out_channels=64,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(64)
-                                               ])
-        self.decoder_convtr_01 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=64,
-                                                                   out_channels=64,
-                                                                   kernel_size=3,
-                                                                   padding=1),
-                                                nn.BatchNorm2d(64)
-                                               ])
-        self.decoder_convtr_00 = nn.Sequential(*[
-                                                nn.ConvTranspose2d(in_channels=64,
-                                                                   out_channels=self.output_channels,
-                                                                   kernel_size=3,
-                                                                   padding=1)
-                                               ])
+        features = list(vgg16.features.children())
 
-    def forward(self, input_img):
-        """
-        Forward pass `input_img` through the network
-        """
+        vgg_layers = []
+        for _layer in features:
+            if isinstance(_layer, nn.Conv2d):
+                vgg_layers.append(_layer)
 
-        # Encoder
+        merged_layers = []
+        for idx, conv_block in enumerate(blocks):
+            if idx < 2:
+                units = [conv_block.conv1.cbr_unit, conv_block.conv2.cbr_unit]
+            else:
+                units = [
+                    conv_block.conv1.cbr_unit,
+                    conv_block.conv2.cbr_unit,
+                    conv_block.conv3.cbr_unit,
+                ]
+            for _unit in units:
+                for _layer in _unit:
+                    if isinstance(_layer, nn.Conv2d):
+                        merged_layers.append(_layer)
 
-        # Encoder Stage - 1
-        dim_0 = input_img.size()
-        x_00 = F.relu(self.encoder_conv_00(input_img))
-        x_01 = F.relu(self.encoder_conv_01(x_00))
-        x_0, indices_0 = F.max_pool2d(x_01, kernel_size=2, stride=2, return_indices=True)
+        assert len(vgg_layers) == len(merged_layers)
 
-        # Encoder Stage - 2
-        dim_1 = x_0.size()
-        x_10 = F.relu(self.encoder_conv_10(x_0))
-        x_11 = F.relu(self.encoder_conv_11(x_10))
-        x_1, indices_1 = F.max_pool2d(x_11, kernel_size=2, stride=2, return_indices=True)
-
-        # Encoder Stage - 3
-        dim_2 = x_1.size()
-        x_20 = F.relu(self.encoder_conv_20(x_1))
-        x_21 = F.relu(self.encoder_conv_21(x_20))
-        x_22 = F.relu(self.encoder_conv_22(x_21))
-        x_2, indices_2 = F.max_pool2d(x_22, kernel_size=2, stride=2, return_indices=True)
-
-        # Encoder Stage - 4
-        dim_3 = x_2.size()
-        x_30 = F.relu(self.encoder_conv_30(x_2))
-        x_31 = F.relu(self.encoder_conv_31(x_30))
-        x_32 = F.relu(self.encoder_conv_32(x_31))
-        x_3, indices_3 = F.max_pool2d(x_32, kernel_size=2, stride=2, return_indices=True)
-
-        # Encoder Stage - 5
-        dim_4 = x_3.size()
-        x_40 = F.relu(self.encoder_conv_40(x_3))
-        x_41 = F.relu(self.encoder_conv_41(x_40))
-        x_42 = F.relu(self.encoder_conv_42(x_41))
-        x_4, indices_4 = F.max_pool2d(x_42, kernel_size=2, stride=2, return_indices=True)
-
-        # Decoder
-
-        dim_d = x_4.size()
-
-        # Decoder Stage - 5
-        x_4d = F.max_unpool2d(x_4, indices_4, kernel_size=2, stride=2, output_size=dim_4)
-        x_42d = F.relu(self.decoder_convtr_42(x_4d))
-        x_41d = F.relu(self.decoder_convtr_41(x_42d))
-        x_40d = F.relu(self.decoder_convtr_40(x_41d))
-        dim_4d = x_40d.size()
-
-        # Decoder Stage - 4
-        x_3d = F.max_unpool2d(x_40d, indices_3, kernel_size=2, stride=2, output_size=dim_3)
-        x_32d = F.relu(self.decoder_convtr_32(x_3d))
-        x_31d = F.relu(self.decoder_convtr_31(x_32d))
-        x_30d = F.relu(self.decoder_convtr_30(x_31d))
-        dim_3d = x_30d.size()
-
-        # Decoder Stage - 3
-        x_2d = F.max_unpool2d(x_30d, indices_2, kernel_size=2, stride=2, output_size=dim_2)
-        x_22d = F.relu(self.decoder_convtr_22(x_2d))
-        x_21d = F.relu(self.decoder_convtr_21(x_22d))
-        x_20d = F.relu(self.decoder_convtr_20(x_21d))
-        dim_2d = x_20d.size()
-
-        # Decoder Stage - 2
-        x_1d = F.max_unpool2d(x_20d, indices_1, kernel_size=2, stride=2, output_size=dim_1)
-        x_11d = F.relu(self.decoder_convtr_11(x_1d))
-        x_10d = F.relu(self.decoder_convtr_10(x_11d))
-        dim_1d = x_10d.size()
-
-        # Decoder Stage - 1
-        x_0d = F.max_unpool2d(x_10d, indices_0, kernel_size=2, stride=2, output_size=dim_0)
-        x_01d = F.relu(self.decoder_convtr_01(x_0d))
-        x_00d = self.decoder_convtr_00(x_01d)
-        dim_0d = x_00d.size()
-
-        x_softmax = F.softmax(x_00d, dim=1)
-
-        if DEBUG:
-            print("dim_0: {}".format(dim_0))
-            print("dim_1: {}".format(dim_1))
-            print("dim_2: {}".format(dim_2))
-            print("dim_3: {}".format(dim_3))
-            print("dim_4: {}".format(dim_4))
-
-            print("dim_d: {}".format(dim_d))
-            print("dim_4d: {}".format(dim_4d))
-            print("dim_3d: {}".format(dim_3d))
-            print("dim_2d: {}".format(dim_2d))
-            print("dim_1d: {}".format(dim_1d))
-            print("dim_0d: {}".format(dim_0d))
-
-        return x_00d, x_softmax
-
-    def init_vgg_weights(self):
-        assert self.encoder_conv_00[0].weight.size() == self.vgg16.features[0].weight.size()
-        self.encoder_conv_00[0].weight.data = self.vgg16.features[0].weight.data
-        assert self.encoder_conv_00[0].bias.size() == self.vgg16.features[0].bias.size()
-        self.encoder_conv_00[0].bias.data = self.vgg16.features[0].bias.data
-
-        assert self.encoder_conv_01[0].weight.size() == self.vgg16.features[2].weight.size()
-        self.encoder_conv_01[0].weight.data = self.vgg16.features[2].weight.data
-        assert self.encoder_conv_01[0].bias.size() == self.vgg16.features[2].bias.size()
-        self.encoder_conv_01[0].bias.data = self.vgg16.features[2].bias.data
-
-        assert self.encoder_conv_10[0].weight.size() == self.vgg16.features[5].weight.size()
-        self.encoder_conv_10[0].weight.data = self.vgg16.features[5].weight.data
-        assert self.encoder_conv_10[0].bias.size() == self.vgg16.features[5].bias.size()
-        self.encoder_conv_10[0].bias.data = self.vgg16.features[5].bias.data
-
-        assert self.encoder_conv_11[0].weight.size() == self.vgg16.features[7].weight.size()
-        self.encoder_conv_11[0].weight.data = self.vgg16.features[7].weight.data
-        assert self.encoder_conv_11[0].bias.size() == self.vgg16.features[7].bias.size()
-        self.encoder_conv_11[0].bias.data = self.vgg16.features[7].bias.data
-
-        assert self.encoder_conv_20[0].weight.size() == self.vgg16.features[10].weight.size()
-        self.encoder_conv_20[0].weight.data = self.vgg16.features[10].weight.data
-        assert self.encoder_conv_20[0].bias.size() == self.vgg16.features[10].bias.size()
-        self.encoder_conv_20[0].bias.data = self.vgg16.features[10].bias.data
-
-        assert self.encoder_conv_21[0].weight.size() == self.vgg16.features[12].weight.size()
-        self.encoder_conv_21[0].weight.data = self.vgg16.features[12].weight.data
-        assert self.encoder_conv_21[0].bias.size() == self.vgg16.features[12].bias.size()
-        self.encoder_conv_21[0].bias.data = self.vgg16.features[12].bias.data
-
-        assert self.encoder_conv_22[0].weight.size() == self.vgg16.features[14].weight.size()
-        self.encoder_conv_22[0].weight.data = self.vgg16.features[14].weight.data
-        assert self.encoder_conv_22[0].bias.size() == self.vgg16.features[14].bias.size()
-        self.encoder_conv_22[0].bias.data = self.vgg16.features[14].bias.data
-
-        assert self.encoder_conv_30[0].weight.size() == self.vgg16.features[17].weight.size()
-        self.encoder_conv_30[0].weight.data = self.vgg16.features[17].weight.data
-        assert self.encoder_conv_30[0].bias.size() == self.vgg16.features[17].bias.size()
-        self.encoder_conv_30[0].bias.data = self.vgg16.features[17].bias.data
-
-        assert self.encoder_conv_31[0].weight.size() == self.vgg16.features[19].weight.size()
-        self.encoder_conv_31[0].weight.data = self.vgg16.features[19].weight.data
-        assert self.encoder_conv_31[0].bias.size() == self.vgg16.features[19].bias.size()
-        self.encoder_conv_31[0].bias.data = self.vgg16.features[19].bias.data
-
-        assert self.encoder_conv_32[0].weight.size() == self.vgg16.features[21].weight.size()
-        self.encoder_conv_32[0].weight.data = self.vgg16.features[21].weight.data
-        assert self.encoder_conv_32[0].bias.size() == self.vgg16.features[21].bias.size()
-        self.encoder_conv_32[0].bias.data = self.vgg16.features[21].bias.data
-
-        assert self.encoder_conv_40[0].weight.size() == self.vgg16.features[24].weight.size()
-        self.encoder_conv_40[0].weight.data = self.vgg16.features[24].weight.data
-        assert self.encoder_conv_40[0].bias.size() == self.vgg16.features[24].bias.size()
-        self.encoder_conv_40[0].bias.data = self.vgg16.features[24].bias.data
-
-        assert self.encoder_conv_41[0].weight.size() == self.vgg16.features[26].weight.size()
-        self.encoder_conv_41[0].weight.data = self.vgg16.features[26].weight.data
-        assert self.encoder_conv_41[0].bias.size() == self.vgg16.features[26].bias.size()
-        self.encoder_conv_41[0].bias.data = self.vgg16.features[26].bias.data
-
-        assert self.encoder_conv_42[0].weight.size() == self.vgg16.features[28].weight.size()
-        self.encoder_conv_42[0].weight.data = self.vgg16.features[28].weight.data
-        assert self.encoder_conv_42[0].bias.size() == self.vgg16.features[28].bias.size()
-        self.encoder_conv_42[0].bias.data = self.vgg16.features[28].bias.data
-
+        for l1, l2 in zip(vgg_layers, merged_layers):
+            if isinstance(l1, nn.Conv2d) and isinstance(l2, nn.Conv2d):
+                assert l1.weight.size() == l2.weight.size()
+                assert l1.bias.size() == l2.bias.size()
+                l2.weight.data = l1.weight.data
+                l2.bias.data = l1.bias.data

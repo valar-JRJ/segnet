@@ -68,14 +68,16 @@ if __name__ == "__main__":
 
     train_dataset = PascalVOCDataset(list_file=train_path,
                                      img_dir=train_img_path,
-                                     mask_dir=train_mask_path)
+                                     mask_dir=train_mask_path,
+                                     img_size=512,
+                                     is_transform=True)
 
     train_dataloader = DataLoader(train_dataset,
                                   batch_size=args.batch_size,
                                   shuffle=True,
                                   num_workers=4)
 
-    model = SegNet(input_channels=NUM_INPUT_CHANNELS, output_channels=NUM_OUTPUT_CHANNELS).to(device)
+    model = SegNet().to(device)
     class_weights = 1.0/train_dataset.get_class_probability().to(device)
     criterion = torch.nn.CrossEntropyLoss(weight=class_weights).to(device)
 
@@ -100,15 +102,14 @@ if __name__ == "__main__":
 
             input_tensor = torch.autograd.Variable(image.to(device))
             target_tensor = torch.autograd.Variable(mask.to(device))
-            predicted_tensor, softmaxed_tensor = model(input_tensor)
+            output = model(input_tensor)
 
             optimizer.zero_grad()
-            loss = criterion(predicted_tensor, target_tensor)
+            loss = criterion(output, target_tensor)
             loss.backward()
             optimizer.step()
 
             epoch_loss.update(loss.item())
-            prediction_f = softmaxed_tensor.float()
             writer.scalar_summary('train_loss', loss, batches_done)
 
             # Determine approximate time left for epoch

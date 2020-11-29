@@ -35,7 +35,9 @@ def validate(model, val_path, img_path, mask_path, batch_size):
 
     val_dataset = PascalVOCDataset(list_file=val_path,
                                    img_dir=img_path,
-                                   mask_dir=mask_path)
+                                   mask_dir=mask_path,
+                                   img_size=512,
+                                   is_transform=True)
 
     val_dataloader = DataLoader(val_dataset,
                                 batch_size=batch_size,
@@ -50,10 +52,10 @@ def validate(model, val_path, img_path, mask_path, batch_size):
             input_tensor = torch.autograd.Variable(image.to(device))
             target_tensor = torch.autograd.Variable(mask.to(device))
 
-            predicted_tensor, softmaxed_tensor = model(input_tensor)
-            loss = criterion(predicted_tensor, target_tensor)
+            output = model(input_tensor)
+            loss = criterion(output, target_tensor)
 
-            pred = predicted_tensor.data.max(1)[1].cpu().numpy()
+            pred = output.data.max(1)[1].cpu().numpy()
             gt = target_tensor.data.cpu().numpy()
 
             running_metrics_val.update(gt, pred)
@@ -85,8 +87,8 @@ if __name__ == "__main__":
     img_dir = os.path.join(data_root, args.img_dir)
     mask_dir = os.path.join(data_root, args.mask_dir)
 
-    model = SegNet(input_channels=NUM_INPUT_CHANNELS,
-                   output_channels=NUM_OUTPUT_CHANNELS).to(device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = SegNet().to(device)
     model.load_state_dict(torch.load(args.model_path))
 
     val_loss, val_score, val_class_iou = validate(
