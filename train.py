@@ -40,7 +40,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train a SegNet model')
 
     parser.add_argument('--epochs', type=int, default=1000)
-    parser.add_argument('--batch_size', type=int, default=16)
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--eval_interval', type=int, default=10)
     parser.add_argument('--data_root', type=str, default='data/pascal/VOCdevkit/VOC2012')
     parser.add_argument('--train_path', type=str, default='ImageSets/Segmentation/train.txt')
@@ -77,7 +77,7 @@ if __name__ == "__main__":
                                   shuffle=True,
                                   num_workers=4)
 
-    model = SegNet().to(device)
+    model = SegNet(n_classes=NUM_OUTPUT_CHANNELS, in_channels=NUM_INPUT_CHANNELS).to(device)
     class_weights = 1.0/train_dataset.get_class_probability().to(device)
     print(class_weights)
     criterion = torch.nn.CrossEntropyLoss(weight=class_weights).to(device)
