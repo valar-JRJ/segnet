@@ -82,7 +82,7 @@ class PascalVOCDataset(Dataset):
 
             raw_image = Image.open(mask_path).resize((512, 512))
             imx_t = np.array(raw_image).reshape(512*512)
-            imx_t[imx_t == 255] = 0
+            imx_t[imx_t == 255] = len(VOC_CLASSES)
 
             for i in range(NUM_CLASSES):
                 counts[i] += np.sum(imx_t == i)
@@ -96,30 +96,30 @@ class PascalVOCDataset(Dataset):
         return torch.Tensor(p_values)
 
 
-# if __name__ == "__main__":
-#     data_root = os.path.join("data", "VOCdevkit", "VOC2007")
-#     list_file_path = os.path.join(data_root, "ImageSets", "Segmentation", "train.txt")
-#     img_dir = os.path.join(data_root, "JPEGImages")
-#     mask_dir = os.path.join(data_root, "SegmentationObject")
-#
-#     objects_dataset = PascalVOCDataset(list_file=list_file_path,
-#                                        img_dir=img_dir,
-#                                        mask_dir=mask_dir)
-#
-#     print(objects_dataset.get_class_probability())
-#
-#     sample = objects_dataset[0]
-#     image, mask = sample['image'], sample['mask']
-#
-#     image.transpose_(0, 2)
-#
-#     fig = plt.figure()
-#
-#     a = fig.add_subplot(1,2,1)
-#     plt.imshow(image)
-#
-#     a = fig.add_subplot(1,2,2)
-#     plt.imshow(mask)
-#
-#     plt.show()
+if __name__ == "__main__":
+    data_root ='data/pascal/VOCdevkit/VOC2012'
+    list_file_path = os.path.join(data_root, "ImageSets", "Segmentation", "train.txt")
+    img_dir = os.path.join(data_root, "JPEGImages")
+    mask_dir = os.path.join(data_root, "SegmentationObject")
+
+    objects_dataset = PascalVOCDataset(list_file=list_file_path,
+                                       img_dir=img_dir,
+                                       mask_dir=mask_dir,
+                                       img_size=512,
+                                       is_transform=True)
+
+    print(objects_dataset.get_class_probability())
+
+    sample = objects_dataset[0]
+    image, mask = sample
+
+    fig = plt.figure()
+
+    a = fig.add_subplot(1,2,1)
+    plt.imshow(image)
+
+    a = fig.add_subplot(1,2,2)
+    plt.imshow(mask)
+
+    plt.show()
 
