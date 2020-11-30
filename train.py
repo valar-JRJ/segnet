@@ -33,14 +33,14 @@ if __name__ == "__main__":
     NUM_INPUT_CHANNELS = 3
     NUM_OUTPUT_CHANNELS = NUM_CLASSES
 
-    LEARNING_RATE = 1e-4
+    LEARNING_RATE = 0.001
     MOMENTUM = 0.9
 
     # Arguments
     parser = argparse.ArgumentParser(description='Train a SegNet model')
 
     parser.add_argument('--epochs', type=int, default=1000)
-    parser.add_argument('--batch_size', type=int, default=8)
+    parser.add_argument('--batch_size', type=int, default=6)
     parser.add_argument('--eval_interval', type=int, default=10)
     parser.add_argument('--data_root', type=str, default='data/pascal/VOCdevkit/VOC2012')
     parser.add_argument('--train_path', type=str, default='ImageSets/Segmentation/train.txt')
@@ -133,6 +133,8 @@ if __name__ == "__main__":
             val_loss, score, class_iou = validate(
                 model=model, val_path=val_path, img_path=val_img_path, mask_path=val_mask_path, batch_size=8
             )
+            writer.scalar_summary('val_loss', val_loss, epoch+1)
+            logger.info('epoch {} val loss: {}'.format(epoch+1, val_loss))
             for k, v in score.items():
                 print(k, v)
                 logger.info("{}: {}".format(k, v))
@@ -141,5 +143,4 @@ if __name__ == "__main__":
             for k, v in class_iou.items():
                 logger.info("{}: {}".format(k, v))
                 writer.scalar_summary("val_metrics/cls_{}".format(k), v, epoch + 1)
-
 
