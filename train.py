@@ -78,9 +78,9 @@ if __name__ == "__main__":
                                   num_workers=4)
 
     model = SegNet().to(device)
-    class_weights = 1.0/train_dataset.get_class_probability().to(device)
+    class_weights = 1.0/train_dataset.get_class_probability()
     print(class_weights)
-    criterion = torch.nn.CrossEntropyLoss().to(device)
+    criterion = torch.nn.CrossEntropyLoss(weight=class_weights).to(device)
 
     # start from checkpoint
     if args.checkpoint:
