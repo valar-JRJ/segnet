@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 import torch.nn.functional as F
 from PIL import Image
-import matplotlib.pyplot as plt
+import scipy.misc as misc
 
 
 def pad_to_square(img, pad_value):
@@ -144,9 +144,6 @@ if __name__ == "__main__":
 
     Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
 
-    imgs = []  # Stores image paths
-    img_detections = []  # Stores detections for each image index
-
     print("\nPerforming object detection:")
     prev_time = time.time()
     for batch_i, (img_paths, input_imgs) in enumerate(dataloader):
@@ -165,18 +162,6 @@ if __name__ == "__main__":
         inference_time = datetime.timedelta(seconds=current_time - prev_time)
         prev_time = current_time
         print("\t+ Batch %d, Inference Time: %s" % (batch_i, inference_time))
-
-        # Save image and detections
-        imgs.extend(img_paths)
-        img_detections.extend(decoded)
-
-    print("\nSaving images:")
-    # Iterate through images and save plot of detections
-    for img_i, (path, detections) in enumerate(zip(imgs, img_detections)):
-        print("(%d) Image: '%s'" % (img_i, path))
-
-        # Create plot
-        img = np.array(Image.open(path))
-        plt.figure()
-        fig, ax = plt.subplots(1)
-        ax.imshow(img)
+        print("\nSaving images:")
+        filename = img_paths[0].split('/')[-1].split('.')[0]
+        misc.imsave(f'output/{filename}output.png', decoded)
