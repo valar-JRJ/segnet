@@ -1,15 +1,6 @@
 """
 Infer segmentation results from a trained SegNet model
 
-
-Usage:
-python inference.py --data_root /home/SharedData/intern_sayan/PascalVOC2012/data/VOCdevkit/VOC2012/ \
-                    --val_path ImageSets/Segmentation/val.txt \
-                    --img_dir JPEGImages \
-                    --mask_dir SegmentationClass \
-                    --model_path /home/SharedData/intern_sayan/PascalVOC2012/model_best.pth \
-                    --output_dir /home/SharedData/intern_sayan/PascalVOC2012/predictions \
-                    --gpu 1
 """
 
 from __future__ import print_function
